@@ -1,0 +1,509 @@
+package dkls23
+
+import (
+	"crypto/rand"
+	"encoding/json"
+	"testing"
+
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/stretchr/testify/require"
+)
+
+// =====================================================================
+// DKG types
+// =====================================================================
+
+func TestEncodingDKGRound1Output(t *testing.T) {
+	allIDs := []int{1, 2, 3}
+	cfg := DKGPartyConfig{MyID: 1, AllIDs: allIDs, Threshold: 3}
+	out, _, err := DKGRound1(cfg)
+	require.NoError(t, err)
+
+	got := roundTrip(t, "DKGRound1Output", out)
+	require.Len(t, got.FeldmanCommitments, 3)
+	require.Len(t, got.PairwiseCommitments, 2)
+	require.Len(t, got.PairwiseSalts, 2)
+	for _, id := range []int{2, 3} {
+		require.Equal(t, out.PairwiseCommitments[id], got.PairwiseCommitments[id])
+		require.Equal(t, out.PairwiseSalts[id], got.PairwiseSalts[id])
+	}
+}
+
+func TestEncodingDKGRound2Output(t *testing.T) {
+	allIDs := []int{1, 2, 3}
+	cfg := DKGPartyConfig{MyID: 1, AllIDs: allIDs, Threshold: 3}
+	_, coeffs, err := DKGRound1(cfg)
+	require.NoError(t, err)
+	r2, err := DKGRound2(cfg, coeffs, nil)
+	require.NoError(t, err)
+
+	got := roundTrip(t, "DKGRound2Output", r2)
+	require.Len(t, got.SecretShares, 2)
+}
+
+// =====================================================================
+// VOLE types
+// =====================================================================
+
+func TestEncodingVOLEBobState(t *testing.T) {
+	t.Parallel()
+	_, bob, err := runVOLEPairwise()
+	require.NoError(t, err)
+
+	got := roundTrip(t, "VOLEBobState", bob)
+	require.Equal(t, bob.Beta, got.Beta)
+	require.True(t, bob.Chi.Equals(&got.Chi))
+	require.Equal(t, len(bob.Gamma), len(got.Gamma))
+}
+
+func TestEncodingVOLEAliceState(t *testing.T) {
+	t.Parallel()
+	alice, _, err := runVOLEPairwise()
+	require.NoError(t, err)
+
+	got := roundTrip(t, "VOLEAliceState", alice)
+	require.True(t, alice.C_u.Equals(&got.C_u))
+	require.True(t, alice.C_v.Equals(&got.C_v))
+	require.Equal(t, len(alice.Alpha0), len(got.Alpha0))
+}
+
+func TestEncodingVOLEMultiplyMsg(t *testing.T) {
+	t.Parallel()
+	alice, _, err := runVOLEPairwise()
+	require.NoError(t, err)
+	r, _ := sampleScalar()
+	sk, _ := sampleScalar()
+	_, _, msg, err := VOLEAliceMultiply(alice, "test-sid", &r, &sk)
+	require.NoError(t, err)
+
+	got := roundTrip(t, "VOLEMultiplyMsg", msg)
+	require.Equal(t, msg.SID, got.SID)
+	require.Equal(t, msg.Mu, got.Mu)
+	require.Equal(t, msg.ATilde, got.ATilde)
+	require.Equal(t, msg.Eta, got.Eta)
+}
+
+// =====================================================================
+// Signing types
+// =====================================================================
+
+func TestEncodingRound1Msg(t *testing.T) {
+	var m Round1Msg
+	rand.Read(m.Commitment[:])
+	got := roundTrip(t, "Round1Msg", &m)
+	require.Equal(t, m.Commitment, got.Commitment)
+}
+
+func TestEncodingRound3Msg(t *testing.T) {
+	m := &Round3Msg{
+		W_i: make([]byte, 32),
+		U_i: make([]byte, 32),
+	}
+	rand.Read(m.W_i)
+	rand.Read(m.U_i)
+	got := roundTrip(t, "Round3Msg", m)
+	require.Equal(t, m.W_i, got.W_i)
+	require.Equal(t, m.U_i, got.U_i)
+}
+
+func TestEncodingSigningRoundTrip(t *testing.T) {
+	t.Parallel()
+	setups := fullSetup(t)
+	msg := []byte("encoding test message")
+	r1States, r1Msgs, r2States, r2Msgs, r3Frags := fullSign(t, setups, msg)
+
+	// Round1State
+	for id, st := range r1States {
+		got := roundTrip(t, "Round1State", st)
+		require.Equal(t, st.SigID, got.SigID, "party %d", id)
+		require.True(t, st.R_i.Equals(&got.R_i), "party %d R_i", id)
+		require.True(t, st.Phi_i.Equals(&got.Phi_i), "party %d Phi_i", id)
+		require.Equal(t, st.R_iPoint, got.R_iPoint, "party %d R_iPoint", id)
+		require.Equal(t, st.Com, got.Com, "party %d Com", id)
+		require.Equal(t, st.Salt, got.Salt, "party %d Salt", id)
+		require.True(t, st.ZetaI.Equals(&got.ZetaI), "party %d ZetaI", id)
+	}
+
+	// Round1Msg
+	for id, msgs := range r1Msgs {
+		for peer, m := range msgs {
+			got := roundTrip(t, "Round1Msg", m)
+			require.Equal(t, m.Commitment, got.Commitment, "party %d->%d", id, peer)
+		}
+	}
+
+	// Round2State
+	for id, st := range r2States {
+		got := roundTrip(t, "Round2State", st)
+		require.True(t, st.SK_i.Equals(&got.SK_i), "party %d SK_i", id)
+		require.Equal(t, st.Round1State.SigID, got.Round1State.SigID, "party %d embedded SigID", id)
+	}
+
+	// Round2Msg
+	for id, msgs := range r2Msgs {
+		for peer, m := range msgs {
+			got := roundTrip(t, "Round2Msg", m)
+			require.Equal(t, m.Decommitment, got.Decommitment, "party %d->%d Decommitment", id, peer)
+			require.Equal(t, m.Salt, got.Salt, "party %d->%d Salt", id, peer)
+			require.Equal(t, m.GammaU, got.GammaU, "party %d->%d GammaU", id, peer)
+			require.Equal(t, m.PKi, got.PKi, "party %d->%d PKi", id, peer)
+		}
+	}
+
+	// Round3Msg
+	for id, frags := range r3Frags {
+		for peer, m := range frags {
+			got := roundTrip(t, "Round3Msg", m)
+			require.Equal(t, m.W_i, got.W_i, "party %d->%d W_i", id, peer)
+			require.Equal(t, m.U_i, got.U_i, "party %d->%d U_i", id, peer)
+		}
+	}
+}
+
+// =====================================================================
+// Refresh types
+// =====================================================================
+
+func TestEncodingRefreshRoundTrip(t *testing.T) {
+	t.Parallel()
+	setups := fullSetup(t)
+	allIDs := []int{1, 2, 3}
+
+	allR1 := map[int]*RefreshRound1Output{}
+	allCoeffs := map[int][]btcec.ModNScalar{}
+	allSeeds := map[int][16]byte{}
+	for _, id := range allIDs {
+		out, coeffs, seed, err := RefreshRound1(setups[id])
+		require.NoError(t, err)
+		allR1[id] = out
+		allCoeffs[id] = coeffs
+		allSeeds[id] = seed
+	}
+
+	for id, r1 := range allR1 {
+		got := roundTrip(t, "RefreshRound1Output", r1)
+		require.Equal(t, len(r1.FeldmanCommitments), len(got.FeldmanCommitments), "party %d", id)
+		require.Equal(t, r1.SeedCommitment, got.SeedCommitment, "party %d SeedCommitment", id)
+		require.Equal(t, r1.SeedSalt, got.SeedSalt, "party %d SeedSalt", id)
+	}
+
+	allR2 := map[int]*RefreshRound2Output{}
+	for _, id := range allIDs {
+		out, err := RefreshRound2(setups[id], allCoeffs[id], allSeeds[id])
+		require.NoError(t, err)
+		allR2[id] = out
+	}
+
+	for id, r2 := range allR2 {
+		got := roundTrip(t, "RefreshRound2Output", r2)
+		require.Equal(t, r2.Seed, got.Seed, "party %d Seed", id)
+		require.Equal(t, len(r2.SecretShares), len(got.SecretShares), "party %d SecretShares", id)
+	}
+}
+
+// =====================================================================
+// SignerSetup
+// =====================================================================
+
+func TestEncodingSignerSetup(t *testing.T) {
+	t.Parallel()
+	setups := fullSetup(t)
+	for id, s := range setups {
+		got := roundTrip(t, "SignerSetup", s)
+		require.Equal(t, s.MyID, got.MyID, "party %d MyID", id)
+		require.Equal(t, s.AllIDs, got.AllIDs, "party %d AllIDs", id)
+		require.True(t, s.Share.Equals(&got.Share), "party %d Share", id)
+		require.Equal(t, s.PubKey, got.PubKey, "party %d PubKey", id)
+		require.Equal(t, s.Threshold, got.Threshold, "party %d Threshold", id)
+		require.Equal(t, s.Epoch, got.Epoch, "party %d Epoch", id)
+		require.Equal(t, len(s.VoleAlice), len(got.VoleAlice), "party %d VoleAlice", id)
+		require.Equal(t, len(s.VoleBob), len(got.VoleBob), "party %d VoleBob", id)
+		require.Equal(t, len(s.FZeroSeeds), len(got.FZeroSeeds), "party %d FZeroSeeds", id)
+	}
+}
+
+func TestEncodingSignerSetupWithBlacklist(t *testing.T) {
+	t.Parallel()
+	setups := fullSetup(t)
+	setups[1].Blacklist[2] = true
+	setups[1].Epoch = 5
+
+	got := roundTrip(t, "SignerSetup+blacklist", setups[1])
+	require.True(t, got.Blacklist[2])
+	require.False(t, got.Blacklist[3])
+	require.Equal(t, 5, got.Epoch)
+}
+
+func TestEncodingSignerSetupFunctional(t *testing.T) {
+	t.Parallel()
+	setups := fullSetup(t)
+
+	// Marshal and unmarshal all setups
+	restored := make(map[int]*SignerSetup)
+	for id, s := range setups {
+		b, err := json.Marshal(s)
+		require.NoError(t, err)
+		var r SignerSetup
+		require.NoError(t, json.Unmarshal(b, &r))
+		restored[id] = &r
+	}
+
+	// Sign with restored setups — proves the VOLE state survived round-trip
+	msg := []byte("sign after deserialize")
+	sigID := "restored-sig"
+	signers := []int{1, 2, 3}
+
+	r1s := map[int]*Round1State{}
+	r1m := map[int]map[int]*Round1Msg{}
+	for _, id := range signers {
+		st, msgs, err := SignRound1(restored[id], sigID, signers)
+		require.NoError(t, err)
+		r1s[id] = st
+		r1m[id] = msgs
+	}
+	r2s := map[int]*Round2State{}
+	r2m := map[int]map[int]*Round2Msg{}
+	for _, id := range signers {
+		in := map[int]*Round1Msg{}
+		for _, j := range signers {
+			if j != id {
+				in[j] = r1m[j][id]
+			}
+		}
+		st, msgs, err := SignRound2(restored[id], r1s[id], in)
+		require.NoError(t, err)
+		r2s[id] = st
+		r2m[id] = msgs
+	}
+	r3f := map[int]map[int]*Round3Msg{}
+	for _, id := range signers {
+		in := map[int]*Round2Msg{}
+		for _, j := range signers {
+			if j != id {
+				in[j] = r2m[j][id]
+			}
+		}
+		frags, err := SignRound3(restored[id], r2s[id], msg, in)
+		require.NoError(t, err)
+		r3f[id] = frags
+	}
+
+	rxVal := computeRxFromStates(signers, r2s)
+	myFrag := r3f[1][1]
+	var myW, myU btcec.ModNScalar
+	myW.SetByteSlice(myFrag.W_i)
+	myU.SetByteSlice(myFrag.U_i)
+	allFrags := map[int]*Round3Msg{}
+	for _, j := range signers {
+		if j != 1 {
+			allFrags[j] = r3f[j][1]
+		}
+	}
+	r, s, err := SignCombine(restored[1], &rxVal, &myW, &myU, allFrags, msg)
+	require.NoError(t, err)
+	require.NotEmpty(t, r)
+	require.NotEmpty(t, s)
+	t.Logf("Signing with deserialized setups succeeded: r=%x s=%x", r[:4], s[:4])
+}
+
+// =====================================================================
+// Encoding helpers
+// =====================================================================
+
+func TestScalarToHexRoundTrip(t *testing.T) {
+	v, err := sampleScalar()
+	require.NoError(t, err)
+	s := scalarToHex(&v)
+	got, err := hexToScalar(s)
+	require.NoError(t, err)
+	require.True(t, v.Equals(&got))
+}
+
+func TestScalarToHexZero(t *testing.T) {
+	var zero btcec.ModNScalar
+	s := scalarToHex(&zero)
+	got, err := hexToScalar(s)
+	require.NoError(t, err)
+	require.True(t, zero.Equals(&got))
+}
+
+func TestHexToFixed32BadLength(t *testing.T) {
+	_, err := hexToFixed32("aabb")
+	require.Error(t, err)
+}
+
+func TestHexToFixed16BadLength(t *testing.T) {
+	_, err := hexToFixed16("aabb")
+	require.Error(t, err)
+}
+
+func TestBoolArrayRoundTrip(t *testing.T) {
+	var orig [Xi]bool
+	buf := make([]byte, (Xi+7)/8)
+	rand.Read(buf)
+	for j := 0; j < Xi; j++ {
+		orig[j] = (buf[j/8]>>(uint(j)%8))&1 == 1
+	}
+	encoded := encodeBoolArray(orig)
+	decoded, err := decodeBoolArray(encoded)
+	require.NoError(t, err)
+	require.Equal(t, orig, decoded)
+}
+
+func TestIntMapKeysRoundTrip(t *testing.T) {
+	m := map[int]string{1: "a", 2: "b", 3: "c"}
+	sm := intMapKeys(m)
+	require.Equal(t, "a", sm["1"])
+	require.Equal(t, "b", sm["2"])
+	got, err := stringMapKeys(sm)
+	require.NoError(t, err)
+	require.Equal(t, m, got)
+}
+
+func TestStringMapKeysBadKey(t *testing.T) {
+	sm := map[string]string{"notanint": "val"}
+	_, err := stringMapKeys(sm)
+	require.Error(t, err)
+}
+
+func TestVOLESliceRoundTrip(t *testing.T) {
+	data := make([][Ell + Rho][32]byte, Xi)
+	for j := range data {
+		for i := 0; i < Ell+Rho; i++ {
+			rand.Read(data[j][i][:])
+		}
+	}
+	encoded := encodeVOLESlice(data)
+	decoded, err := decodeVOLESlice(encoded)
+	require.NoError(t, err)
+	require.Equal(t, data, decoded)
+}
+
+func TestVOLEFixedRoundTrip(t *testing.T) {
+	var data [Xi][Ell + Rho][32]byte
+	for j := 0; j < Xi; j++ {
+		for i := 0; i < Ell+Rho; i++ {
+			rand.Read(data[j][i][:])
+		}
+	}
+	encoded := encodeVOLEFixed(data)
+	decoded, err := decodeVOLEFixed(encoded)
+	require.NoError(t, err)
+	require.Equal(t, data, decoded)
+}
+
+// =====================================================================
+// Encoding error paths (helpers)
+// =====================================================================
+
+func TestHexToScalarBadHex(t *testing.T) {
+	_, err := hexToScalar("zzzz")
+	require.Error(t, err)
+}
+
+func TestHexToFixed32BadHex(t *testing.T) {
+	_, err := hexToFixed32("zzzz")
+	require.Error(t, err)
+}
+
+func TestHexToFixed16BadHex(t *testing.T) {
+	_, err := hexToFixed16("zzzz")
+	require.Error(t, err)
+}
+
+func TestStringMapKeysBadInt(t *testing.T) {
+	m := map[string]*VOLEBobState{"abc": nil}
+	_, err := stringMapKeys(m)
+	require.Error(t, err)
+}
+
+func TestStringMapKeysNil(t *testing.T) {
+	got, err := stringMapKeys[*VOLEBobState](nil)
+	require.NoError(t, err)
+	require.Nil(t, got)
+}
+
+func TestIntMapKeysNil(t *testing.T) {
+	got := intMapKeys[string](nil)
+	require.Nil(t, got)
+}
+
+func TestJsonToIntMap32BadKey(t *testing.T) {
+	_, err := jsonToIntMap32(map[string]string{"abc": "00"})
+	require.Error(t, err)
+}
+
+func TestJsonToIntMap32BadHex(t *testing.T) {
+	_, err := jsonToIntMap32(map[string]string{"1": "zzzz"})
+	require.Error(t, err)
+}
+
+func TestJsonToIntMap16BadKey(t *testing.T) {
+	_, err := jsonToIntMap16(map[string]string{"abc": "00"})
+	require.Error(t, err)
+}
+
+func TestJsonToIntMap16BadHex(t *testing.T) {
+	_, err := jsonToIntMap16(map[string]string{"1": "zzzz"})
+	require.Error(t, err)
+}
+
+func TestJsonToIntMapBytesBadKey(t *testing.T) {
+	_, err := jsonToIntMapBytes(map[string]string{"abc": "00"})
+	require.Error(t, err)
+}
+
+func TestJsonToIntMapBytesBadHex(t *testing.T) {
+	_, err := jsonToIntMapBytes(map[string]string{"1": "zzzz"})
+	require.Error(t, err)
+}
+
+func TestHexToScalarMapBadKey(t *testing.T) {
+	_, err := hexToScalarMap(map[string]string{"abc": "00"})
+	require.Error(t, err)
+}
+
+func TestHexToScalarMapBadHex(t *testing.T) {
+	_, err := hexToScalarMap(map[string]string{"1": "zzzz"})
+	require.Error(t, err)
+}
+
+func TestDecodeVOLESliceBadBase64(t *testing.T) {
+	_, err := decodeVOLESlice("!!!bad!!!")
+	require.Error(t, err)
+}
+
+func TestDecodeVOLESliceBadSize(t *testing.T) {
+	_, err := decodeVOLESlice("AAAA")
+	require.Error(t, err)
+}
+
+func TestDecodeVOLEFixedBadBase64(t *testing.T) {
+	_, err := decodeVOLEFixed("!!!bad!!!")
+	require.Error(t, err)
+}
+
+func TestDecodeVOLEFixedBadSize(t *testing.T) {
+	_, err := decodeVOLEFixed("AAAA")
+	require.Error(t, err)
+}
+
+func TestDecodeRhoFixedBadHex(t *testing.T) {
+	_, err := decodeRhoFixed("zzzz")
+	require.Error(t, err)
+}
+
+func TestDecodeRhoFixedBadSize(t *testing.T) {
+	_, err := decodeRhoFixed("aabb")
+	require.Error(t, err)
+}
+
+func TestDecodeBoolArrayBadBase64(t *testing.T) {
+	_, err := decodeBoolArray("!!!bad!!!")
+	require.Error(t, err)
+}
+
+func TestDecodeBoolArrayBadSize(t *testing.T) {
+	_, err := decodeBoolArray("AA==")
+	require.Error(t, err)
+}

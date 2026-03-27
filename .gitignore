@@ -1,0 +1,43 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+example/dkls23-example
+
+# Go build/test artifacts
+*.out
+*.test
+*.prof
+coverage.html
+
+# Key shares (contain private key material)
+keyshares/
+*.keyshare
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Secrets and environment
+.env
+.env.*
+*.secret
+credentials.json
+secrets.json
+config.json
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/settings.local.json
