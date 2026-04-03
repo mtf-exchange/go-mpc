@@ -5,6 +5,7 @@
 *.so
 *.dylib
 example/dkls23-example
+example/*-demo
 
 # Go build/test artifacts
 *.out
