@@ -11,14 +11,16 @@ test-race:
 # Run tests with verbose output
 test-verbose:
 	go test -v ./dkls23
+	go test -v ./frost
 
 # Run benchmarks
 bench:
 	go test -bench=. -benchmem ./dkls23
+	go test -bench=. -benchmem ./frost
 
 # Show test coverage
 cover:
-	go test -coverprofile=coverage.out ./dkls23
+	go test -coverprofile=coverage.out ./dkls23 ./frost
 	go tool cover -func=coverage.out | tail -1
 	@rm -f coverage.out
 

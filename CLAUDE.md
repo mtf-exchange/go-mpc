@@ -37,13 +37,25 @@ go test -race -timeout 120s ./...
   - `encoding.go` — Wire format JSON marshaling
   - `errors.go` — Typed error categories
   - `params.go` — Security constants and package-level docs
-- `example/` — In-memory 3-of-3 demo (`cd example && go run .`)
+- `frost/` — FROST threshold Schnorr / Ed25519 package (RFC 9591).
+  - `keygen.go` — Feldman VSS distributed key generation (2 rounds)
+  - `sign.go` — 2-round threshold signing + aggregation
+  - `verify.go` — Cofactored Ed25519 verification
+  - `hash.go` — H1-H5 domain-separated hash functions
+  - `persistence.go` — Encrypted serialization
+  - `encoding.go` — Wire format JSON marshaling
+  - `errors.go` — Typed error categories
+  - `params.go` — Ciphersuite constants and package-level docs
+- `example/` — Runnable demos
+  - `shared/` — AES-256-GCM encryptor shared by both demos
+  - `dkls23/` — 3-of-3 DKLS23 ECDSA demo (`cd example/dkls23 && go run .`)
+  - `frost/` — 2-of-3 FROST Ed25519 demo (`cd example/frost && go run .`)
   - Separate `go.mod` with `replace github.com/chrisalmeida/go-mpc => ../`
   - Not included in `go test ./...` — run and test independently
 
 ## Conventions
 
-- Error messages: `"dkls23 FunctionName: description"`
+- Error messages: `"dkls23 FunctionName: description"` or `"frost FunctionName: description"`
 - Formatting: `gofmt`, `go vet`, `staticcheck` must all pass
 - Tests: maintain 90%+ coverage, always run with `-race`
 - Dependencies: keep minimal — only add if cryptographically necessary
