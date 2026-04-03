@@ -175,7 +175,7 @@ func SignRound1(signer *SignerState, signers []int) (*Round1State, *NonceCommitm
 // This hedges against bad RNG by mixing in the secret key.
 func nonceGenerate(secret []byte) (*edwards25519.Scalar, error) {
 	var randomBytes [32]byte
-	if _, err := randRead(randomBytes[:]); err != nil {
+	if _, err := rand.Read(randomBytes[:]); err != nil {
 		return nil, err
 	}
 	input := make([]byte, 32+len(secret))
@@ -190,13 +190,6 @@ func nonceGenerate(secret []byte) (*edwards25519.Scalar, error) {
 		input[i] = 0
 	}
 	return nonce, nil
-}
-
-// randRead is a variable to allow test injection.
-var randRead = randReadDefault
-
-func randReadDefault(b []byte) (int, error) {
-	return rand.Read(b)
 }
 
 // SignRound2 computes signer i's signature share.

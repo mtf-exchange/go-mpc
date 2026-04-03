@@ -448,7 +448,7 @@ runtime, or the deployment environment:
 | **Random oracle model** | frost | SHA-512 modeled as a random oracle is a cryptographic assumption from FROST / RFC 9591. |
 | **Physical side channels** | both | Power analysis, EM emanation require hardware countermeasures. |
 | **`InverseValNonConst`** | dkls23 | Replaced with constant-time `scalarInverse` (Fermat's little theorem). No longer called. |
-| **`randRead` test hook** | frost | `var randRead` in `sign.go` enables test injection but is mutable at runtime. Documented risk; callers should not import this symbol. |
+| **`randRead` test hook** | frost | **Removed.** Previously `var randRead` in `sign.go` enabled test injection but was mutable at runtime. Replaced with direct `crypto/rand.Read` calls. |
 | **No independent audit** | both | This automated review is not a substitute for a third-party audit. |
 
 ---

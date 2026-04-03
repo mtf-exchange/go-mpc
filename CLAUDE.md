@@ -2,7 +2,10 @@
 
 ## Project Overview
 
-DKLS23 threshold ECDSA library in Go. Implements the [DKLS23 paper](https://eprint.iacr.org/2023/765) (Doerner, Kondi, Lee, shelat — IEEE S&P 2024) for multi-party computation over secp256k1.
+Threshold signing library in Go. Implements two protocols:
+
+- **DKLS23** — Threshold ECDSA over secp256k1 ([DKLS23 paper](https://eprint.iacr.org/2023/765), IEEE S&P 2024)
+- **FROST** — Threshold Schnorr / Ed25519 ([RFC 9591](https://www.rfc-editor.org/rfc/rfc9591.html), FROST(Ed25519, SHA-512))
 
 - **Module**: `github.com/chrisalmeida/go-mpc`
 - **Go**: 1.25+
@@ -63,27 +66,50 @@ go test -race -timeout 120s ./...
 
 ## Test Performance
 
-CI runs on resource-constrained GitHub Actions runners where crypto-heavy tests can be 3–5× slower than local. The test suite uses three techniques to stay fast:
+CI runs on resource-constrained GitHub Actions runners where crypto-heavy tests can be 3–5× slower than local.
+
+### dkls23 test patterns
 
 1. **Parallel VOLE setup** — `buildSetups()` in `helpers_test.go` runs pairwise VOLE/FZero setup concurrently across goroutines (one per party pair).
 2. **Cached 3-of-3 fixture** — `fullSetup(t)` builds the expensive DKG+VOLE setup once via `sync.Once` and deep-copies via JSON for each caller. Use `fullSetup(t)` for any test that needs a standard 3-of-3. Only call `setupSigners(t, ids, threshold)` for non-standard configs (2-of-3, 2-of-2, etc.).
 3. **`t.Parallel()`** — All tests that do crypto work (VOLE, OT, signing, refresh) must include `t.Parallel()` so they overlap. This is safe because `fullSetup` returns independent deep copies and `setupSigners`/`buildSetups` create fresh state.
 
-When adding new tests:
+When adding new dkls23 tests:
 - If the test needs a 3-of-3 setup, use `fullSetup(t)` (cached) — **not** `setupSigners(t, []int{1,2,3}, 3)`.
 - Add `t.Parallel()` to any test that takes >100ms or calls `fullSetup`/`setupSigners`/`runVOLEPairwise`.
 - Never share mutable state between parallel tests; each test should own its setup.
 
+### frost test patterns
+
+1. **Cached 3-of-3 fixture** — `fullSetup(t)` in `helpers_test.go` runs DKG once via `sync.Once` and deep-copies via JSON for each caller. FROST has no VOLE/OT setup, so the DKG is fast, but the cache follows the same pattern for consistency.
+2. **`fullSign(t, keyShares, signers, msg)`** — Runs a complete signing session (round 1 → round 2 → aggregate with share verification). Use this for any test that needs a valid signature.
+3. **`buildDKG(allIDs, threshold)`** — Runs a fresh DKG for non-standard configs (2-of-3, 2-of-2). Use instead of `fullSetup` when testing non-3-of-3 setups.
+4. **`t.Parallel()`** — Same rules as dkls23: add to any test doing crypto work.
+
+When adding new frost tests:
+- If the test needs a 3-of-3 setup, use `fullSetup(t)` (cached) — **not** `buildDKG([]int{1,2,3}, 3)`.
+- Add `t.Parallel()` to any test that takes >100ms or calls `fullSetup`/`buildDKG`/`fullSign`.
+- Never share mutable state between parallel tests; each test should own its setup.
+
 ## Security-Sensitive Areas
 
-All code in `dkls23/` is security-critical. Key areas requiring extra care:
+All code in `dkls23/` and `frost/` is security-critical.
+
+### dkls23
 - DKG (Feldman VSS commitment verification)
 - Signing (nonce generation, consistency checks)
 - VOLE/OT (oblivious transfer correctness)
 - Key refresh (share re-randomization)
 - Persistence (encryption key handling)
 
-Ephemeral secrets (polynomial coefficients, nonce shares, Lagrange coefficients) are zeroized after use.
+### frost
+- DKG (Feldman VSS commitment verification, commitment count validation)
+- Signing (hedged nonce generation via `nonce_generate`, nonce reuse prevention)
+- Aggregation (signature share verification for identifiable abort)
+- Verification (cofactored equation, non-canonical point/scalar rejection)
+- Persistence (encryption key handling)
+
+Ephemeral secrets (polynomial coefficients, nonce shares, Lagrange coefficients) are zeroized after use in both packages.
 
 ## CI
 
