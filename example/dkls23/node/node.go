@@ -297,11 +297,6 @@ func VerifySignature(pubKeyBytes, message, r, s []byte) bool {
 	return ecdsa.NewSignature(&rS, &sS).Verify(msgHash[:], pubKey)
 }
 
-// FormatPubKey returns the hex-encoded compressed public key.
-func FormatPubKey(pubKey []byte) string {
-	return hex.EncodeToString(pubKey)
-}
-
 func randomBools(n int) []bool {
 	buf := make([]byte, (n+7)/8)
 	if _, err := rand.Read(buf); err != nil {

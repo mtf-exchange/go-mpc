@@ -4,87 +4,48 @@
 //  2. Pairwise Setup  — Base OT + OT Extension + VOLE + FZero
 //  3. Signing         — 3-round threshold ECDSA
 //  4. Key Refresh     — rotate shares without changing the public key
+//  5. Persistence     — encrypted key shares saved to disk and reloaded
 //
-// Each Node is an independent party. The orchestrator here is a stand-in for
-// whatever transport you use in production (HTTP, gRPC, message queue, etc.).
+// On the first run, all five phases execute and shares are saved to shares/.
+// On subsequent runs, shares are loaded from disk — DKG and pairwise setup
+// are skipped, and the public key stays the same.
+//
+// Delete the shares/ directory to start fresh.
+//
+// Run: cd example/dkls23 && go run .
 package main
 
 import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"path/filepath"
 
-	"dkls23-example/node"
+	"go-mpc-example/dkls23/node"
+	"go-mpc-example/shared"
+
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/chrisalmeida/go-mpc/dkls23"
 )
 
-func main() {
-	const threshold = 3
-	allIDs := []int{1, 2, 3}
+const (
+	shareDir  = "shares"
+	threshold = 3
+)
 
+var allIDs = []int{1, 2, 3}
+
+func main() {
 	fmt.Println("DKLS23 Threshold ECDSA — 3-of-3 Demo")
 	fmt.Println()
 
-	// ── Phase 1: Distributed Key Generation ─────────────────────────
+	nodes, pubKey := loadOrGenerate()
 
-	fmt.Println("Phase 1: Key Generation")
-
-	nodes := make([]*node.Node, len(allIDs))
-	for i, id := range allIDs {
-		nodes[i] = node.New(id, allIDs, threshold)
-	}
-
-	// Round 1: sample polynomial, broadcast Feldman commitments.
-	allRound1 := make(map[int]*dkls23.DKGRound1Output)
-	for _, n := range nodes {
-		out, err := n.DKGRound1()
-		if err != nil {
-			log.Fatalf("DKG round 1 node %d: %v", n.ID, err)
-		}
-		allRound1[n.ID] = out
-	}
-
-	// Round 2: decommit pairwise shares.
-	allRound2 := make(map[int]*dkls23.DKGRound2Output)
-	for _, n := range nodes {
-		out, err := n.DKGRound2(allRound1)
-		if err != nil {
-			log.Fatalf("DKG round 2 node %d: %v", n.ID, err)
-		}
-		allRound2[n.ID] = out
-	}
-
-	// Finalize: verify commitments, compute Shamir share, derive public key.
-	var pubKey []byte
-	for _, n := range nodes {
-		pk, err := n.DKGFinalize(allRound1, allRound2)
-		if err != nil {
-			log.Fatalf("DKG finalize node %d: %v", n.ID, err)
-		}
-		pubKey = pk
-	}
-	fmt.Printf("  public key: %s\n\n", hex.EncodeToString(pubKey))
-
-	// ── Phase 2: Pairwise VOLE + FZero Setup ────────────────────────
-
-	fmt.Println("Phase 2: Pairwise Setup (one-time)")
-
-	for i := 0; i < len(nodes); i++ {
-		for j := i + 1; j < len(nodes); j++ {
-			if err := nodes[i].SetupPairwiseWith(nodes[j]); err != nil {
-				log.Fatalf("pairwise setup %d↔%d: %v", nodes[i].ID, nodes[j].ID, err)
-			}
-			fmt.Printf("  node %d ↔ node %d: VOLE + FZero established\n", nodes[i].ID, nodes[j].ID)
-		}
-	}
-	fmt.Println()
-
-	// ── Phase 3: Threshold Signing ──────────────────────────────────
+	// ── Signing ─────────────────────────────────────────────────────
 
 	message := []byte("hello threshold ECDSA")
-	fmt.Println("Phase 3: Signing")
+	fmt.Println("Phase: Signing")
 	fmt.Printf("  message: %q\n", message)
 
 	r, s := sign(nodes, allIDs, message)
@@ -116,11 +77,99 @@ func main() {
 	fmt.Printf("  Message: %s\n", message)
 	fmt.Println()
 
-	// ── Phase 4: Key Refresh ────────────────────────────────────────
+	fmt.Println("Done.")
+}
 
-	fmt.Println("Phase 4: Key Refresh")
+// loadOrGenerate loads existing shares from disk or runs the full ceremony
+// (DKG → pairwise setup → refresh → persist) if no shares exist.
+func loadOrGenerate() (nodes []*node.Node, pubKey []byte) {
+	enc, loaded, err := shared.LoadOrCreateKey(shareDir)
+	if err != nil {
+		log.Fatalf("encryption key: %v", err)
+	}
+	if loaded {
+		return loadShares(enc)
+	}
+	return generateAndSave(enc)
+}
 
-	// Round 1: each node samples a zero-constant polynomial and commits.
+// loadShares reads encrypted share files and returns ready-to-sign nodes.
+func loadShares(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
+	fmt.Println("Loading key shares from disk...")
+
+	nodes := make([]*node.Node, len(allIDs))
+	for i, id := range allIDs {
+		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", id))
+		n, err := node.NewFromFile(p, enc)
+		if err != nil {
+			log.Fatalf("load node %d: %v", id, err)
+		}
+		nodes[i] = n
+		fmt.Printf("  node %d loaded (epoch %d)\n", n.ID, n.Epoch())
+	}
+
+	pubKey := nodes[0].PublicKey()
+	fmt.Printf("  public key: %s\n\n", hex.EncodeToString(pubKey))
+	return nodes, pubKey
+}
+
+// generateAndSave runs DKG, pairwise setup, refresh, and saves to disk.
+func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
+	// ── DKG ─────────────────────────────────────────────────────
+
+	fmt.Println("Phase 1: Key Generation")
+
+	nodes := make([]*node.Node, len(allIDs))
+	for i, id := range allIDs {
+		nodes[i] = node.New(id, allIDs, threshold)
+	}
+
+	allRound1 := make(map[int]*dkls23.DKGRound1Output)
+	for _, n := range nodes {
+		out, err := n.DKGRound1()
+		if err != nil {
+			log.Fatalf("DKG round 1 node %d: %v", n.ID, err)
+		}
+		allRound1[n.ID] = out
+	}
+
+	allRound2 := make(map[int]*dkls23.DKGRound2Output)
+	for _, n := range nodes {
+		out, err := n.DKGRound2(allRound1)
+		if err != nil {
+			log.Fatalf("DKG round 2 node %d: %v", n.ID, err)
+		}
+		allRound2[n.ID] = out
+	}
+
+	var pubKey []byte
+	for _, n := range nodes {
+		pk, err := n.DKGFinalize(allRound1, allRound2)
+		if err != nil {
+			log.Fatalf("DKG finalize node %d: %v", n.ID, err)
+		}
+		pubKey = pk
+	}
+	fmt.Printf("  public key: %s\n\n", hex.EncodeToString(pubKey))
+
+	// ── Pairwise Setup ──────────────────────────────────────────
+
+	fmt.Println("Phase 2: Pairwise Setup (one-time)")
+
+	for i := 0; i < len(nodes); i++ {
+		for j := i + 1; j < len(nodes); j++ {
+			if err := nodes[i].SetupPairwiseWith(nodes[j]); err != nil {
+				log.Fatalf("pairwise setup %d↔%d: %v", nodes[i].ID, nodes[j].ID, err)
+			}
+			fmt.Printf("  node %d ↔ node %d: VOLE + FZero established\n", nodes[i].ID, nodes[j].ID)
+		}
+	}
+	fmt.Println()
+
+	// ── Key Refresh ─────────────────────────────────────────────
+
+	fmt.Println("Phase 3: Key Refresh")
+
 	allRefR1 := make(map[int]*dkls23.RefreshRound1Output)
 	for _, n := range nodes {
 		out, err := n.RefreshRound1()
@@ -130,7 +179,6 @@ func main() {
 		allRefR1[n.ID] = out
 	}
 
-	// Round 2: decommit shares and reveal seeds.
 	allRefR2 := make(map[int]*dkls23.RefreshRound2Output)
 	for _, n := range nodes {
 		out, err := n.RefreshRound2(allRefR1)
@@ -140,26 +188,28 @@ func main() {
 		allRefR2[n.ID] = out
 	}
 
-	// Finalize: verify, update shares, re-randomise VOLE/FZero.
 	for _, n := range nodes {
 		if err := n.RefreshFinalize(allRefR1, allRefR2); err != nil {
 			log.Fatalf("refresh finalize node %d: %v", n.ID, err)
 		}
 	}
 	fmt.Println("  shares rotated, public key unchanged")
+	fmt.Println()
 
-	// Sign again with refreshed shares to prove correctness.
-	refreshMsg := []byte("post-refresh signing works")
-	r2, s2 := sign(nodes, allIDs, refreshMsg)
+	// ── Persist ─────────────────────────────────────────────────
 
-	if node.VerifySignature(pubKey, refreshMsg, r2, s2) {
-		fmt.Println("  post-refresh signature valid")
-	} else {
-		log.Fatal("  post-refresh signature verification FAILED")
+	fmt.Println("Phase 4: Saving Key Shares")
+
+	for _, n := range nodes {
+		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))
+		if err := n.SaveSetup(p, enc); err != nil {
+			log.Fatalf("save node %d: %v", n.ID, err)
+		}
+		fmt.Printf("  node %d → %s\n", n.ID, p)
 	}
 	fmt.Println()
 
-	fmt.Println("Done.")
+	return nodes, pubKey
 }
 
 // sign runs the 3-round signing protocol across all nodes and returns (r, s).

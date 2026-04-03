@@ -1,8 +1,9 @@
-module dkls23-example
+module go-mpc-example
 
 go 1.25.0
 
 require (
+	filippo.io/edwards25519 v1.2.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
 	github.com/chrisalmeida/go-mpc v0.0.0
 )
