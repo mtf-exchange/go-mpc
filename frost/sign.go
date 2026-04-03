@@ -28,6 +28,9 @@ type SignerState struct {
 	KeyShare *KeyShare
 	// Blacklist records parties detected cheating.
 	Blacklist map[int]bool
+	// Epoch is the proactive refresh epoch counter, starting at 0 and
+	// incremented on each RefreshFinalize.
+	Epoch int
 }
 
 // NewSignerState creates a SignerState from a KeyShare.

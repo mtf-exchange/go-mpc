@@ -1,9 +1,10 @@
 // This example demonstrates a complete 2-of-3 FROST threshold Ed25519 flow:
 //
 //  1. Key Generation  — Feldman VSS DKG, no trusted dealer (2 rounds)
-//  2. Signing         — 2-round threshold Schnorr signing
-//  3. Verification    — cofactored Ed25519 + crypto/ed25519 cross-check
-//  4. Persistence     — encrypted key shares saved to disk and reloaded
+//  2. Key Refresh     — rotate shares without changing the public key
+//  3. Signing         — 2-round threshold Schnorr signing
+//  4. Verification    — cofactored Ed25519 + crypto/ed25519 cross-check
+//  5. Persistence     — encrypted key shares saved to disk and reloaded
 //
 // On the first run, DKG executes and shares are saved to shares/.
 // On subsequent runs, shares are loaded from disk and DKG is skipped.
@@ -161,9 +162,39 @@ func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
 	pubKey := nodes[0].PublicKey()
 	fmt.Printf("  public key: %s\n\n", hex.EncodeToString(pubKey))
 
+	// ── Key Refresh ─────────────────────────────────────────────
+
+	fmt.Println("Phase 2: Key Refresh")
+
+	allRefR1 := make(map[int]*frost.RefreshRound1Output)
+	for _, n := range nodes {
+		out, err := n.RefreshRound1()
+		if err != nil {
+			log.Fatalf("refresh round 1 node %d: %v", n.ID, err)
+		}
+		allRefR1[n.ID] = out
+	}
+
+	allRefR2 := make(map[int]*frost.RefreshRound2Output)
+	for _, n := range nodes {
+		out, err := n.RefreshRound2()
+		if err != nil {
+			log.Fatalf("refresh round 2 node %d: %v", n.ID, err)
+		}
+		allRefR2[n.ID] = out
+	}
+
+	for _, n := range nodes {
+		if err := n.RefreshFinalize(allRefR1, allRefR2); err != nil {
+			log.Fatalf("refresh finalize node %d: %v", n.ID, err)
+		}
+	}
+	fmt.Println("  shares rotated, public key unchanged")
+	fmt.Println()
+
 	// ── Persist ─────────────────────────────────────────────────
 
-	fmt.Println("Phase 2: Saving Key Shares")
+	fmt.Println("Phase 3: Saving Key Shares")
 
 	for _, n := range nodes {
 		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))

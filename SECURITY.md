@@ -48,15 +48,22 @@ Cheating detection in FROST is simpler due to Schnorr's linearity:
 - **Blacklisting**: Detected cheaters are permanently blacklisted via
   `SignerState.Blacklist` and rejected from all future signing sessions.
 
-### Proactive Key Refresh (dkls23 only)
+### Proactive Key Refresh
 
-Key shares can be refreshed without changing the master public key (KMOS21
-protocol). This limits the exposure window if a share is compromised:
+Both packages support proactive key share refresh — rotating shares without
+changing the master public key. This limits the exposure window if a share
+is compromised.
 
-- Shamir shares are re-randomized using fresh degree-(t-1) polynomials with
-  zero constant term.
-- VOLE correlations and FZero seeds are refreshed alongside shares.
-- Refresh sessions are tracked by epoch to prevent replay.
+#### dkls23
+- Shamir shares re-randomized using zero-constant Feldman VSS polynomials.
+- VOLE correlations and FZero seeds refreshed alongside shares (KMOS21).
+- Refresh sessions tracked by epoch to prevent replay.
+
+#### frost
+- Shamir shares re-randomized using zero-constant Feldman VSS polynomials.
+- Verification shares updated to match new secret shares.
+- No VOLE/OT state (FROST has none). Simpler than dkls23 refresh.
+- Refresh sessions tracked by epoch to prevent replay.
 
 ## Constant-Time Guarantees
 

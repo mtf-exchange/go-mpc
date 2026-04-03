@@ -271,8 +271,9 @@ probability of sampling zero.
 | **Persistence** | `SetupEncryptor` interface separates encryption from serialization (same pattern as dkls23). |
 | **Domain separation** | 4 domain tags (`rho`, `nonce`, `msg`, `com`) are named constants in `hash.go`. `ContextString` prefix prevents cross-ciphersuite collisions. |
 | **`orderMinus2` constant** | Verified: L = `0x1000000000000000000000000000000014DEF9DEA2F79CD65812631A5CF5D3ED`, L-2 has last byte `0xEB`. Little-endian encoding matches. |
+| **Key refresh** | Zero-constant polynomial Feldman VSS. `RefreshFinalize` validates commitment count, FCom decommitment, Feldman consistency, and seed decommitment before mutating state. Verification shares updated atomically. Epoch counter incremented. |
 | **Defense-in-depth** | `Aggregate` verifies the final signature against the group public key before returning, catching protocol bugs. |
-| **Error messages** | All 8 frost production files reviewed. No secret scalar values, key material, or private state in any error string. |
+| **Error messages** | All 9 frost production files reviewed. No secret scalar values, key material, or private state in any error string. |
 
 ---
 

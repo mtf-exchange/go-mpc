@@ -6,6 +6,7 @@
 //   - 2-round distributed Feldman VSS DKG
 //   - 2-round threshold signing (RFC 9591 Section 5.2)
 //   - Signature aggregation and verification (RFC 9591 Section 5.3)
+//   - Proactive key share refresh (zero-constant polynomial Feldman VSS)
 //
 // # Ciphersuite
 //
@@ -27,7 +28,7 @@
 //
 // # Usage flow
 //
-// DKG (2 rounds + finalize) -> signing (2 rounds + aggregate) -> verify.
+// DKG (2 rounds + finalize) -> signing (2 rounds + aggregate) -> verify -> optional refresh.
 package frost
 
 import (

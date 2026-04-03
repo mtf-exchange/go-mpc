@@ -43,6 +43,7 @@ go test -race -timeout 120s ./...
 - `frost/` — FROST threshold Schnorr / Ed25519 package (RFC 9591).
   - `keygen.go` — Feldman VSS distributed key generation (2 rounds)
   - `sign.go` — 2-round threshold signing + aggregation
+  - `refresh.go` — Proactive key share refresh
   - `verify.go` — Cofactored Ed25519 verification
   - `hash.go` — H1-H5 domain-separated hash functions
   - `persistence.go` — Encrypted serialization
@@ -106,6 +107,7 @@ All code in `dkls23/` and `frost/` is security-critical.
 - DKG (Feldman VSS commitment verification, commitment count validation)
 - Signing (hedged nonce generation via `nonce_generate`, nonce reuse prevention)
 - Aggregation (signature share verification for identifiable abort)
+- Key refresh (zero-constant polynomial share re-randomization)
 - Verification (cofactored equation, non-canonical point/scalar rejection)
 - Persistence (encryption key handling)
 

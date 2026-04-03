@@ -76,6 +76,7 @@ func (ks *KeyShare) UnmarshalJSON(data []byte) error {
 type signerStateJSON struct {
 	KeyShare  *KeyShare        `json:"key_share"`
 	Blacklist map[string]bool  `json:"blacklist"`
+	Epoch     int              `json:"epoch"`
 }
 
 func (ss *SignerState) MarshalJSON() ([]byte, error) {
@@ -84,6 +85,7 @@ func (ss *SignerState) MarshalJSON() ([]byte, error) {
 	j := signerStateJSON{
 		KeyShare:  ss.KeyShare,
 		Blacklist: intBoolMapToString(ss.Blacklist),
+		Epoch:     ss.Epoch,
 	}
 	return json.Marshal(j)
 }
@@ -99,6 +101,7 @@ func (ss *SignerState) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	ss.Blacklist = bl
+	ss.Epoch = j.Epoch
 	return nil
 }
 
@@ -285,6 +288,133 @@ func (s *Signature) UnmarshalJSON(data []byte) error {
 	}
 	s.Z, err = hex.DecodeString(j.Z)
 	return err
+}
+
+// --- RefreshRound1Output ---
+
+type refreshRound1JSON struct {
+	FeldmanCommitments  []string            `json:"feldman_commitments"`
+	PairwiseCommitments map[string]string   `json:"pairwise_commitments"`
+	PairwiseSalts       map[string]string   `json:"pairwise_salts"`
+	SeedCommitment      string              `json:"seed_commitment"`
+	SeedSalt            string              `json:"seed_salt"`
+}
+
+func (o *RefreshRound1Output) MarshalJSON() ([]byte, error) {
+	j := refreshRound1JSON{
+		FeldmanCommitments:  make([]string, len(o.FeldmanCommitments)),
+		PairwiseCommitments: make(map[string]string),
+		PairwiseSalts:       make(map[string]string),
+		SeedCommitment:      hex.EncodeToString(o.SeedCommitment[:]),
+		SeedSalt:            hex.EncodeToString(o.SeedSalt[:]),
+	}
+	for i, c := range o.FeldmanCommitments {
+		j.FeldmanCommitments[i] = hex.EncodeToString(c)
+	}
+	for k, v := range o.PairwiseCommitments {
+		j.PairwiseCommitments[strconv.Itoa(k)] = hex.EncodeToString(v[:])
+	}
+	for k, v := range o.PairwiseSalts {
+		j.PairwiseSalts[strconv.Itoa(k)] = hex.EncodeToString(v[:])
+	}
+	return json.Marshal(j)
+}
+
+func (o *RefreshRound1Output) UnmarshalJSON(data []byte) error {
+	var j refreshRound1JSON
+	if err := json.Unmarshal(data, &j); err != nil {
+		return err
+	}
+	o.FeldmanCommitments = make([][]byte, len(j.FeldmanCommitments))
+	for i, s := range j.FeldmanCommitments {
+		b, err := hex.DecodeString(s)
+		if err != nil {
+			return fmt.Errorf("frost: decode refresh feldman[%d]: %w", i, err)
+		}
+		o.FeldmanCommitments[i] = b
+	}
+	o.PairwiseCommitments = make(map[int][32]byte)
+	for k, v := range j.PairwiseCommitments {
+		id, err := strconv.Atoi(k)
+		if err != nil {
+			return err
+		}
+		b, err := hex.DecodeString(v)
+		if err != nil {
+			return err
+		}
+		var arr [32]byte
+		copy(arr[:], b)
+		o.PairwiseCommitments[id] = arr
+	}
+	o.PairwiseSalts = make(map[int][SaltLen]byte)
+	for k, v := range j.PairwiseSalts {
+		id, err := strconv.Atoi(k)
+		if err != nil {
+			return err
+		}
+		b, err := hex.DecodeString(v)
+		if err != nil {
+			return err
+		}
+		var arr [SaltLen]byte
+		copy(arr[:], b)
+		o.PairwiseSalts[id] = arr
+	}
+	seedComBytes, err := hex.DecodeString(j.SeedCommitment)
+	if err != nil {
+		return fmt.Errorf("frost: decode seed_commitment: %w", err)
+	}
+	copy(o.SeedCommitment[:], seedComBytes)
+	seedSaltBytes, err := hex.DecodeString(j.SeedSalt)
+	if err != nil {
+		return fmt.Errorf("frost: decode seed_salt: %w", err)
+	}
+	copy(o.SeedSalt[:], seedSaltBytes)
+	return nil
+}
+
+// --- RefreshRound2Output ---
+
+type refreshRound2JSON struct {
+	SecretShares map[string]string `json:"secret_shares"`
+	Seed         string            `json:"seed"`
+}
+
+func (o *RefreshRound2Output) MarshalJSON() ([]byte, error) {
+	j := refreshRound2JSON{
+		SecretShares: make(map[string]string),
+		Seed:         hex.EncodeToString(o.Seed[:]),
+	}
+	for k, v := range o.SecretShares {
+		j.SecretShares[strconv.Itoa(k)] = hex.EncodeToString(v)
+	}
+	return json.Marshal(j)
+}
+
+func (o *RefreshRound2Output) UnmarshalJSON(data []byte) error {
+	var j refreshRound2JSON
+	if err := json.Unmarshal(data, &j); err != nil {
+		return err
+	}
+	o.SecretShares = make(map[int][]byte)
+	for k, v := range j.SecretShares {
+		id, err := strconv.Atoi(k)
+		if err != nil {
+			return err
+		}
+		b, err := hex.DecodeString(v)
+		if err != nil {
+			return err
+		}
+		o.SecretShares[id] = b
+	}
+	seedBytes, err := hex.DecodeString(j.Seed)
+	if err != nil {
+		return fmt.Errorf("frost: decode seed: %w", err)
+	}
+	copy(o.Seed[:], seedBytes)
+	return nil
 }
 
 // --- helpers ---

@@ -60,6 +60,7 @@ Implementation of [RFC 9591](https://www.rfc-editor.org/rfc/rfc9591.html) (FROST
 - **Flexible t-of-n** — 2-of-3, 3-of-5, or any threshold configuration
 - **RFC 8032 Compatible** — FROST signatures verify with `crypto/ed25519.Verify`
 - **Identifiable Abort** — individual signature shares are verified, misbehaving signers are identified
+- **Key Share Refresh** — proactive share rotation without changing the public key
 - **Hedged Nonce Generation** — RFC 9591 `nonce_generate` mixes CSPRNG with secret key
 - **Cofactored Verification** — `[8]zB == [8](R + [c]PK)` per RFC 9591 Section 6.5
 - **Encrypted Persistence** — pluggable encryption for key share storage
@@ -78,7 +79,7 @@ round1Out, coeffs, _ := frost.DKGRound1(config)
 // 4. Verify: frost.Verify(pk, msg, sig) or crypto/ed25519.Verify(pk, msg, sig.Bytes())
 ```
 
-See [example/frost/](example/frost/) for a runnable 2-of-3 flow — DKG, signing with all subsets, and verification:
+See [example/frost/](example/frost/) for a runnable 2-of-3 flow — DKG, key refresh, signing with all subsets, and verification:
 
 ```bash
 cd example/frost && go run .
@@ -108,6 +109,7 @@ dkls23/              Threshold ECDSA (secp256k1)
 frost/               Threshold Schnorr / Ed25519 (RFC 9591)
   keygen.go          Distributed key generation (Feldman VSS)
   sign.go            2-round threshold signing + aggregation
+  refresh.go         Proactive key share refresh
   verify.go          Cofactored Ed25519 verification
   hash.go            H1-H5 domain-separated hash functions
   encoding.go        Wire format JSON marshaling

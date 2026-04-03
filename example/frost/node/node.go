@@ -18,8 +18,10 @@ type Node struct {
 	Threshold int
 	State     *frost.SignerState
 
-	dkgConfig frost.DKGPartyConfig
-	dkgCoeffs []*edwards25519.Scalar
+	dkgConfig    frost.DKGPartyConfig
+	dkgCoeffs    []*edwards25519.Scalar
+	refreshCoeffs []*edwards25519.Scalar
+	refreshSeed   [16]byte
 }
 
 // New creates a Node for the given party ID.
@@ -97,4 +99,45 @@ func (n *Node) SignRound1(signers []int) (*frost.Round1State, *frost.NonceCommit
 
 func (n *Node) SignRound2(state *frost.Round1State, input *frost.Round2Input) (*frost.SignatureShare, error) {
 	return frost.SignRound2(n.State, state, input)
+}
+
+// ── Key Refresh ─────────────────────────────────────────────────
+
+func (n *Node) RefreshRound1() (*frost.RefreshRound1Output, error) {
+	out, coeffs, seed, err := frost.RefreshRound1(n.State)
+	if err != nil {
+		return nil, fmt.Errorf("node %d RefreshRound1: %w", n.ID, err)
+	}
+	n.refreshCoeffs = coeffs
+	n.refreshSeed = seed
+	return out, nil
+}
+
+func (n *Node) RefreshRound2() (*frost.RefreshRound2Output, error) {
+	out, err := frost.RefreshRound2(n.State, n.refreshCoeffs, n.refreshSeed)
+	if err != nil {
+		return nil, fmt.Errorf("node %d RefreshRound2: %w", n.ID, err)
+	}
+	return out, nil
+}
+
+func (n *Node) RefreshFinalize(
+	allRound1 map[int]*frost.RefreshRound1Output,
+	allRound2 map[int]*frost.RefreshRound2Output,
+) error {
+	err := frost.RefreshFinalize(n.State, n.refreshCoeffs, n.refreshSeed, allRound1, allRound2)
+	n.refreshCoeffs = nil
+	n.refreshSeed = [16]byte{}
+	if err != nil {
+		return fmt.Errorf("node %d RefreshFinalize: %w", n.ID, err)
+	}
+	return nil
+}
+
+// Epoch returns the current refresh epoch (0 before any refresh).
+func (n *Node) Epoch() int {
+	if n.State == nil {
+		return 0
+	}
+	return n.State.Epoch
 }

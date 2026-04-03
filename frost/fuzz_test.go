@@ -87,6 +87,24 @@ func FuzzFeldmanVerify(f *testing.F) {
 	})
 }
 
+func FuzzUnmarshalRefreshRound1Output(f *testing.F) {
+	f.Add([]byte(`{"feldman_commitments":[],"pairwise_commitments":{},"pairwise_salts":{},"seed_commitment":"","seed_salt":""}`))
+	f.Add([]byte(`{}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var v RefreshRound1Output
+		_ = json.Unmarshal(data, &v)
+	})
+}
+
+func FuzzUnmarshalRefreshRound2Output(f *testing.F) {
+	f.Add([]byte(`{"secret_shares":{},"seed":""}`))
+	f.Add([]byte(`{}`))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var v RefreshRound2Output
+		_ = json.Unmarshal(data, &v)
+	})
+}
+
 func FuzzValidatePartyIDs(f *testing.F) {
 	f.Add(1, 2, 3)
 	f.Add(0, 1, 2)
