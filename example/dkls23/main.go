@@ -26,6 +26,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+
 	"github.com/chrisalmeida/go-mpc/dkls23"
 )
 
@@ -42,40 +43,23 @@ func main() {
 
 	nodes, pubKey := loadOrGenerate()
 
-	// ── Signing ─────────────────────────────────────────────────────
+	// ── Signing (before refresh) ────────────────────────────────────
 
 	message := []byte("hello threshold ECDSA")
-	fmt.Println("Phase: Signing")
-	fmt.Printf("  message: %q\n", message)
+	fmt.Println("Phase: Signing (before refresh)")
+	signAndPrint(nodes, pubKey, allIDs, message)
 
-	r, s := sign(nodes, allIDs, message)
+	// ── Key Refresh ─────────────────────────────────────────────────
 
-	fmt.Printf("  r: %s\n", hex.EncodeToString(r))
-	fmt.Printf("  s: %s\n", hex.EncodeToString(s))
-
-	if node.VerifySignature(pubKey, message, r, s) {
-		fmt.Println("  signature valid")
-	} else {
-		log.Fatal("  signature verification FAILED")
-	}
-
-	// Verification data for https://emn178.github.io/online-tools/ecdsa/verify/
-	// Settings: Curve=secp256k1, Hash=SHA-256, Input=UTF-8, Key format=Raw
-	parsedPub, err := btcec.ParsePubKey(pubKey)
-	if err != nil {
-		log.Fatalf("parse pubkey: %v", err)
-	}
-	var rScalar, sScalar btcec.ModNScalar
-	rScalar.SetByteSlice(r)
-	sScalar.SetByteSlice(s)
-	derSig := ecdsa.NewSignature(&rScalar, &sScalar).Serialize()
-
+	fmt.Println("Phase: Key Refresh")
+	refresh(nodes)
+	fmt.Println("  shares rotated, public key unchanged")
 	fmt.Println()
-	fmt.Println("  Verify at: https://emn178.github.io/online-tools/ecdsa/verify/")
-	fmt.Printf("  Public key (uncompressed): %s\n", hex.EncodeToString(parsedPub.SerializeUncompressed()))
-	fmt.Printf("  Signature (DER): %s\n", hex.EncodeToString(derSig))
-	fmt.Printf("  Message: %s\n", message)
-	fmt.Println()
+
+	// ── Signing (after refresh) ─────────────────────────────────────
+
+	fmt.Println("Phase: Signing (after refresh)")
+	signAndPrint(nodes, pubKey, allIDs, message)
 
 	fmt.Println("Done.")
 }
@@ -166,10 +150,56 @@ func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
 	}
 	fmt.Println()
 
-	// ── Key Refresh ─────────────────────────────────────────────
+	// ── Persist ─────────────────────────────────────────────────
 
-	fmt.Println("Phase 3: Key Refresh")
+	fmt.Println("Phase 3: Saving Key Shares")
 
+	for _, n := range nodes {
+		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))
+		if err := n.SaveSetup(p, enc); err != nil {
+			log.Fatalf("save node %d: %v", n.ID, err)
+		}
+		fmt.Printf("  node %d → %s\n", n.ID, p)
+	}
+	fmt.Println()
+
+	return nodes, pubKey
+}
+
+// signAndPrint signs a message, verifies, and prints verification data for the online tool.
+func signAndPrint(nodes []*node.Node, pubKey []byte, signers []int, message []byte) {
+	fmt.Printf("  message: %q\n", message)
+
+	r, s := sign(nodes, signers, message)
+
+	fmt.Printf("  r: %s\n", hex.EncodeToString(r))
+	fmt.Printf("  s: %s\n", hex.EncodeToString(s))
+
+	if node.VerifySignature(pubKey, message, r, s) {
+		fmt.Println("  signature valid")
+	} else {
+		log.Fatal("  signature verification FAILED")
+	}
+
+	parsedPub, err := btcec.ParsePubKey(pubKey)
+	if err != nil {
+		log.Fatalf("parse pubkey: %v", err)
+	}
+	var rScalar, sScalar btcec.ModNScalar
+	rScalar.SetByteSlice(r)
+	sScalar.SetByteSlice(s)
+	derSig := ecdsa.NewSignature(&rScalar, &sScalar).Serialize()
+
+	fmt.Println()
+	fmt.Println("  Verify at: https://emn178.github.io/online-tools/ecdsa/verify/")
+	fmt.Printf("  Public key (uncompressed): %s\n", hex.EncodeToString(parsedPub.SerializeUncompressed()))
+	fmt.Printf("  Signature (DER): %s\n", hex.EncodeToString(derSig))
+	fmt.Printf("  Message: %s\n", message)
+	fmt.Println()
+}
+
+// refresh runs the 2-round key refresh protocol across all nodes.
+func refresh(nodes []*node.Node) {
 	allRefR1 := make(map[int]*dkls23.RefreshRound1Output)
 	for _, n := range nodes {
 		out, err := n.RefreshRound1()
@@ -193,23 +223,6 @@ func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
 			log.Fatalf("refresh finalize node %d: %v", n.ID, err)
 		}
 	}
-	fmt.Println("  shares rotated, public key unchanged")
-	fmt.Println()
-
-	// ── Persist ─────────────────────────────────────────────────
-
-	fmt.Println("Phase 4: Saving Key Shares")
-
-	for _, n := range nodes {
-		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))
-		if err := n.SaveSetup(p, enc); err != nil {
-			log.Fatalf("save node %d: %v", n.ID, err)
-		}
-		fmt.Printf("  node %d → %s\n", n.ID, p)
-	}
-	fmt.Println()
-
-	return nodes, pubKey
 }
 
 // sign runs the 3-round signing protocol across all nodes and returns (r, s).

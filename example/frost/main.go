@@ -42,47 +42,25 @@ func main() {
 	fmt.Println()
 
 	nodes, pubKey := loadOrGenerate()
-
-	// ── Signing (all three 2-of-3 subsets) ─────────────────────
-
 	message := []byte("hello threshold Ed25519")
-	fmt.Println("Phase: Signing")
-	fmt.Printf("  message: %q\n", message)
 
-	subsets := [][]int{{1, 2}, {1, 3}, {2, 3}}
-	var lastSig *frost.Signature
-	for _, signers := range subsets {
-		sig := sign(nodes, signers, message)
-		lastSig = sig
+	// ── Signing (before refresh) ────────────────────────────────
 
-		fmt.Printf("\n  signers %v:\n", signers)
-		fmt.Printf("    R: %s\n", hex.EncodeToString(sig.R))
-		fmt.Printf("    z: %s\n", hex.EncodeToString(sig.Z))
+	fmt.Println("Phase: Signing (before refresh)")
+	signAndPrint(nodes, pubKey, message)
 
-		// Verify with FROST cofactored verifier.
-		if frost.Verify(pubKey, message, sig) {
-			fmt.Println("    frost.Verify: valid")
-		} else {
-			log.Fatal("    frost.Verify: FAILED")
-		}
+	// ── Key Refresh ─────────────────────────────────────────────
 
-		// Cross-verify with standard crypto/ed25519.
-		if ed25519.Verify(ed25519.PublicKey(pubKey), message, sig.Bytes()) {
-			fmt.Println("    ed25519.Verify: valid (RFC 8032 compatible)")
-		} else {
-			log.Fatal("    ed25519.Verify: FAILED")
-		}
-	}
-
-	// Print verification data for external tool.
+	fmt.Println("Phase: Key Refresh")
+	refresh(nodes)
+	fmt.Println("  shares rotated, public key unchanged")
 	fmt.Println()
-	fmt.Println("  Verify at: https://cyphr.me/ed25519_tool/ed.html")
-	fmt.Println("  Settings: Algorithm=Ed25519, Msg Encoding=Text(UTF-8), Key Encoding=Hex")
-	fmt.Printf("  Public Key: %s\n", hex.EncodeToString(pubKey))
-	fmt.Printf("  Signature:  %s\n", hex.EncodeToString(lastSig.Bytes()))
-	fmt.Printf("  Message:    %s\n", message)
 
-	fmt.Println()
+	// ── Signing (after refresh) ─────────────────────────────────
+
+	fmt.Println("Phase: Signing (after refresh)")
+	signAndPrint(nodes, pubKey, message)
+
 	fmt.Println("Done.")
 }
 
@@ -162,10 +140,60 @@ func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
 	pubKey := nodes[0].PublicKey()
 	fmt.Printf("  public key: %s\n\n", hex.EncodeToString(pubKey))
 
-	// ── Key Refresh ─────────────────────────────────────────────
+	// ── Persist ─────────────────────────────────────────────────
 
-	fmt.Println("Phase 2: Key Refresh")
+	fmt.Println("Phase 2: Saving Key Shares")
 
+	for _, n := range nodes {
+		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))
+		if err := n.SaveKeyShare(p, enc); err != nil {
+			log.Fatalf("save node %d: %v", n.ID, err)
+		}
+		fmt.Printf("  node %d → %s\n", n.ID, p)
+	}
+	fmt.Println()
+
+	return nodes, pubKey
+}
+
+// signAndPrint signs with all 2-of-3 subsets, verifies, and prints verification data.
+func signAndPrint(nodes []*node.Node, pubKey []byte, message []byte) {
+	fmt.Printf("  message: %q\n", message)
+
+	subsets := [][]int{{1, 2}, {1, 3}, {2, 3}}
+	var lastSig *frost.Signature
+	for _, signers := range subsets {
+		sig := sign(nodes, signers, message)
+		lastSig = sig
+
+		fmt.Printf("\n  signers %v:\n", signers)
+		fmt.Printf("    R: %s\n", hex.EncodeToString(sig.R))
+		fmt.Printf("    z: %s\n", hex.EncodeToString(sig.Z))
+
+		if frost.Verify(pubKey, message, sig) {
+			fmt.Println("    frost.Verify: valid")
+		} else {
+			log.Fatal("    frost.Verify: FAILED")
+		}
+
+		if ed25519.Verify(ed25519.PublicKey(pubKey), message, sig.Bytes()) {
+			fmt.Println("    ed25519.Verify: valid (RFC 8032 compatible)")
+		} else {
+			log.Fatal("    ed25519.Verify: FAILED")
+		}
+	}
+
+	fmt.Println()
+	fmt.Println("  Verify at: https://cyphr.me/ed25519_tool/ed.html")
+	fmt.Println("  Settings: Algorithm=Ed25519, Msg Encoding=Text(UTF-8), Key Encoding=Hex")
+	fmt.Printf("  Public Key: %s\n", hex.EncodeToString(pubKey))
+	fmt.Printf("  Signature:  %s\n", hex.EncodeToString(lastSig.Bytes()))
+	fmt.Printf("  Message:    %s\n", message)
+	fmt.Println()
+}
+
+// refresh runs the 2-round key refresh protocol across all nodes.
+func refresh(nodes []*node.Node) {
 	allRefR1 := make(map[int]*frost.RefreshRound1Output)
 	for _, n := range nodes {
 		out, err := n.RefreshRound1()
@@ -189,23 +217,6 @@ func generateAndSave(enc *shared.AESEncryptor) ([]*node.Node, []byte) {
 			log.Fatalf("refresh finalize node %d: %v", n.ID, err)
 		}
 	}
-	fmt.Println("  shares rotated, public key unchanged")
-	fmt.Println()
-
-	// ── Persist ─────────────────────────────────────────────────
-
-	fmt.Println("Phase 3: Saving Key Shares")
-
-	for _, n := range nodes {
-		p := filepath.Join(shareDir, fmt.Sprintf("node-%d.enc", n.ID))
-		if err := n.SaveKeyShare(p, enc); err != nil {
-			log.Fatalf("save node %d: %v", n.ID, err)
-		}
-		fmt.Printf("  node %d → %s\n", n.ID, p)
-	}
-	fmt.Println()
-
-	return nodes, pubKey
 }
 
 // sign runs the 2-round FROST signing protocol across the given nodes.
