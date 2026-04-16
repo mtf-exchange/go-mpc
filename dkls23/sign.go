@@ -416,13 +416,20 @@ type Round3Msg struct {
 //
 // If any check fails for party j: blacklist j and return error.
 func SignRound3(setup *SignerSetup, state2 *Round2State, message []byte, allRound2 map[int]*Round2Msg) (msgs map[int]*Round3Msg, err error) {
+	h := sha256.Sum256(message)
+	return SignRound3Prehashed(setup, state2, h, allRound2)
+}
+
+// SignRound3Prehashed is like SignRound3 but accepts a pre-computed 32-byte message hash.
+// Use this when the caller has already hashed the message (e.g. Ethereum's Keccak-256).
+func SignRound3Prehashed(setup *SignerSetup, state2 *Round2State, msgHash [32]byte, allRound2 map[int]*Round2Msg) (msgs map[int]*Round3Msg, err error) {
 	secretdo.Do(func() {
-		msgs, err = signRound3(setup, state2, message, allRound2)
+		msgs, err = signRound3(setup, state2, msgHash, allRound2)
 	})
 	return
 }
 
-func signRound3(setup *SignerSetup, state2 *Round2State, message []byte, allRound2 map[int]*Round2Msg) (map[int]*Round3Msg, error) {
+func signRound3(setup *SignerSetup, state2 *Round2State, msgHash [32]byte, allRound2 map[int]*Round2Msg) (map[int]*Round3Msg, error) {
 	setup.mu.Lock()
 	defer setup.mu.Unlock()
 	if err := checkBlacklist(setup, state2.Signers, "SignRound3"); err != nil {
@@ -625,8 +632,7 @@ func signRound3(setup *SignerSetup, state2 *Round2State, message []byte, allRoun
 		v_i.Add(&dv)
 	}
 
-	// w_i = SHA256(message)*phi_i + rx*v_i mod q.
-	msgHash := sha256.Sum256(message)
+	// w_i = H(message)*phi_i + rx*v_i mod q.
 	var hashScalar btcec.ModNScalar
 	hashScalar.SetByteSlice(msgHash[:])
 
@@ -700,13 +706,19 @@ func ComputeRx(noncePoints map[int][]byte) (btcec.ModNScalar, error) {
 // s = sum(w_j) / sum(u_j) mod q; r = rx.
 // Verifies the signature against the master public key before returning.
 func SignCombine(setup *SignerSetup, rx *btcec.ModNScalar, myW, myU *btcec.ModNScalar, allRound3 map[int]*Round3Msg, message []byte) (r, s []byte, err error) {
+	h := sha256.Sum256(message)
+	return SignCombinePrehashed(setup, rx, myW, myU, allRound3, h)
+}
+
+// SignCombinePrehashed is like SignCombine but accepts a pre-computed 32-byte message hash.
+func SignCombinePrehashed(setup *SignerSetup, rx *btcec.ModNScalar, myW, myU *btcec.ModNScalar, allRound3 map[int]*Round3Msg, msgHash [32]byte) (r, s []byte, err error) {
 	secretdo.Do(func() {
-		r, s, err = signCombine(setup, rx, myW, myU, allRound3, message)
+		r, s, err = signCombine(setup, rx, myW, myU, allRound3, msgHash)
 	})
 	return
 }
 
-func signCombine(setup *SignerSetup, rx *btcec.ModNScalar, myW, myU *btcec.ModNScalar, allRound3 map[int]*Round3Msg, message []byte) (r, s []byte, err error) {
+func signCombine(setup *SignerSetup, rx *btcec.ModNScalar, myW, myU *btcec.ModNScalar, allRound3 map[int]*Round3Msg, msgHash [32]byte) (r, s []byte, err error) {
 	setup.mu.RLock()
 	defer setup.mu.RUnlock()
 
@@ -745,8 +757,6 @@ func signCombine(setup *SignerSetup, rx *btcec.ModNScalar, myW, myU *btcec.ModNS
 	if err2 != nil {
 		return nil, nil, fmt.Errorf("dkls23 SignCombine: parse pubkey: %w", err2)
 	}
-	msgHash := sha256.Sum256(message)
-
 	var rScalar, sScalar btcec.ModNScalar
 	rScalar.SetByteSlice(rBytes)
 	sScalar.SetByteSlice(sBytes)
